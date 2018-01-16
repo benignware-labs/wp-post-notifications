@@ -1,6 +1,6 @@
 {
   "name": "wp-post-notifications",
-  "version": "0.0.6",
+  "version": "0.0.1",
   "type": "wordpress-plugin",
   "license": "MIT",
   "description": "Let users subscribe to post updates",
