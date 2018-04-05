@@ -6,7 +6,8 @@
     <p class="pn-description"><?= $description ?></p>
   <?php endif; ?>
   <?php if ($success): ?>
-    <?= __('Successfully subscribed to this post.', 'post-notifications'); ?>
+    <p>
+      <?= __('Successfully subscribed to this post.', 'post-notifications'); ?>
     </p>
   <?php else: ?>
     <form class="pn-form" method="POST">
