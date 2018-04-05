@@ -4,11 +4,13 @@
  Plugin Name: Post notifications
  Plugin URI: http://github.com/benignware-labs/wp-post-notifications
  Description: Let users subscribe to post updates
- Version: 0.0.1
+ Version: 0.0.2
  Author: Rafael Nowrotek, Benignware
  Author URI: http://benignware.com
  License: MIT
 */
+
+require_once 'post-notifications-helpers.php';
 
 function post_notifications_mail($to, $subject = '', $body = '', $headers = '') {
   $headers = array(
@@ -185,144 +187,150 @@ function post_notifications_post_updated($post_id, $post_after, $post_before) {
 add_action( 'post_updated', 'post_notifications_post_updated', 10, 3 ); //don't forget the last argument to allow all three arguments of the function
 
 
+function post_notifications_sanitize_output($html, $form_name = null, $hidden = array()) {
+  $is_valid = $form_name ? false : true;
+  if (!$is_valid) {
+    // Parse input
+    $doc = new DOMDocument();
+    @$doc->loadHTML('<?xml encoding="utf-8" ?>' . $html );
+    // Get the container element
+    $container = $doc->getElementsByTagName('body')->item(0)->firstChild;
+    $container->setAttribute("data-$form_name", 'test');
+    // Get the form element
+    $form = $doc->getElementsByTagName( 'form' )->item(0);
+    if ($form) {
+      $action = $form->getAttribute('action') ?: $_SERVER['REQUEST_URI'];
+      $form->setAttribute('action', $action);
+      $method = $form->getAttribute('method') ?: 'POST';
+      $form->setAttribute('method', $method);
+
+      $input_elements = $doc->getElementsByTagName( 'input' );
+      $hidden_fields = array();
+
+      // Go through present hidden fields and add update values
+      foreach ($input_elements as $input_element) {
+        $input_type = $input_element->getAttribute('type');
+        $input_name = $input_element->getAttribute('name');
+        if ($input_type === 'hidden' && array_key_exists($hidden, $input_name)) {
+          $hidden_fields[] = $input_name;
+          $input_element->setAttribute($input_name, $hidden[$input_name]);
+        }
+      }
+
+      // And add the missing hidden fields
+      foreach ($hidden as $field => $value) {
+        if (!in_array($field, $hidden_fields)) {
+          $input_element = $doc->createElement('input');
+          $input_element->setAttribute('type', 'hidden');
+          $input_element->setAttribute('name', $field);
+          $input_element->setAttribute('value', $hidden[$field]);
+          $form->appendChild($input_element);
+        }
+      }
+    } else {
+      // TODO: Handle error "Output must contain a form"
+    }
+    if (!$is_valid) {
+      $html = preg_replace('~(?:<\?[^>]*>|<(?:!DOCTYPE|/?(?:html|head|body))[^>]*>)\s*~i', '', $doc->saveHTML());
+    }
+  }
+  return $html;
+}
+
 /**
  * Post Notifications Shortcode
  */
 function post_notifications_shortcode( $atts = array() ) {
-  $current_user = wp_get_current_user();
+  $messages = array(
+    'empty' => __('This field cannot be empty', 'post-notifications'),
+    'email_invalid' => __('You have to enter a valid e-mail address', 'post-notifications')
+  );
 
   $atts = shortcode_atts(array(
-    'post_id' => '',
-    'class' => 'post-notifications',
-    'form_class' => '',
-    'form_error_class' => '',
-    'field_class' => 'field',
-    'field_error_class' => '',
-    "label_email" => "Email",
-    "label_submit" => "Send",
-    "input_class" => 'input',
-    "input_error_class" => "error",
-    "message_class" => "message",
-    "message_error_class" => "error",
-    "button_class" => "button",
-    "footer_class" => "",
-    // the error message when at least one of the required fields are empty:
-    "message_error_empty" => "Please fill in all the required fields.",
-    // the error message when the e-mail address is not valid:
-    "message_error_email_invalid" => "Please enter a valid e-mail address.",
-    // the error message when the e-mail address has already been subscribed to the post
-    "message_error_email_exists" => "E-mail has already been subscribed to this post.",
-    // and the success message when the e-mail is sent:
-    "message_success" => "Thanks for your e-mail! We'll get back to you as soon as we can.",
-    'message_success_class' => 'success'
+    'post_id' => get_the_ID(),
+    'fields' => 'email',
+    'required' => 'email',
+    'title' => __('Subscribe to this post!', 'post-notifications'),
+    'description' => __('Get notified on updates', 'post-notifications'),
+    'template' => dirname(__FILE__) . '/post-notifications-template.php'
   ), $atts, 'post_notifications');
 
-  // Extract atts
   $post_id = $atts['post_id'];
-  $class = $atts['class'];
-  $form_class = $atts['form_class'];
-  $form_error_class = $atts['form_error_class'];
-  $footer_class = $atts['footer_class'];
-  $field_class = $atts['field_class'];
-  $field_error_class = $atts['field_error_class'];
-  $email = $atts['email'];
-  $label_email = $atts['label_email'];
-  $label_submit = $atts['label_submit'];
-  $placeholder_email = $atts['placeholder_email'];
-  $input_class = $atts['input_class'];
-  $input_error_class = $atts['input_error_class'];
-  $message_class = $atts['message_class'];
-  $message_error_class = $atts['message_error_class'];
-  $message_error_empty = $atts['message_error_empty'];
-  $message_error_email_invalid = $atts['message_error_email_invalid'];
-  $message_error_email_exists = $atts['message_error_email_exists'];
-  $message_success = $atts['message_success'];
-  $message_success_class = $atts['message_success_class'];
-  $button_class = $atts['button_class'];
 
-  $post_id = $atts['post_id'] ? $atts['post_id'] : get_the_ID();
+  // Get arrays from string lists
+  if (is_string($atts['fields'])) {
+    $atts['fields'] = post_notifications_split_val($atts['fields']);
+  }
 
-  // Get classes
-  $form_classes = explode(' ', $form_class);
-  $field_classes = explode(' ', $field_class);
-  $input_classes = explode(' ', $input_class);
-  $message_classes = explode(' ', $message_class);
+  if (is_string($atts['required'])) {
+    $atts['required'] = post_notifications_split_val($atts['required']);
+  }
 
-  // If the <form> element is POSTed, run the following code
-  if ( $_SERVER['REQUEST_METHOD'] == 'POST' ) {
+  // Extract attributes
+  foreach($atts as $key => $value) {
+    $$key = $atts[$key];
+  }
 
-      $error = false;
-      $form_data = post_notifications_get_post_data();
-      $required_fields = array( 'email', 'post_id' ); // Set required fields
+  // Get request data
+  $request = post_notifications_get_request();
 
-      // If the required fields are empty, switch $error to TRUE and set the result text to the shortcode attribute named 'error_empty'
-      foreach ( $required_fields as $required_field ) {
-        $value = trim( $form_data[$required_field] );
-        if ( empty( $value ) ) {
-            $error = true;
-            $message = $essage_error_empty;
-        }
-      }
+  $errors = array();
 
-      // And if the e-mail is not valid, switch $error to TRUE and set the result text to the shortcode attribute named 'error_noemail'
-      if ( ! is_email( $form_data['email'] ) ) {
-        $error = true;
-        $message = $essage_error_email_invalid;
-      }
+  // Check against method
+  if ( $request['method'] === 'POST') {
+    $data = $request['data'];
 
-      if ( !$error ) {
-        // Validate uniqueness against database
-        $row = post_notifications_get_by_post_id_and_email($form_data['post_id'], $form_data['email']);
-        if ($row) {
-          $error = true;
-          $message = $message_error_email_exists;
-          // TODO: Unsubscribe with confirmation mail
-        }
-      }
-
-      if ( !$error ) {
-        // Success
-        $message = $message_success;
-
-        // Add success classes
-        array_push($message_classes, $message_success_class);
-
-        // Actually subscribe the user's email to post updates
-        post_notifications_insert($form_data['post_id'], $form_data['email']);
-      } else {
-        // Error
-
-        // Add error classes
-        array_push($form_classes, $form_error_class);
-        array_push($field_classes, $field_error_class);
-        array_push($input_classes, $input_error_class);
-        array_push($message_classes, $message_error_class);
+    // If the required fields are empty, switch $error to TRUE and set the result text to the shortcode attribute named 'error_empty'
+    foreach ( $required as $key ) {
+      $value = trim( $data[$key] );
+      if ( empty( $value ) ) {
+        $errors[$key] = $messages['empty'];
       }
     }
 
-    // Set up css classes
-    $form_class = implode(' ', $form_classes);
-    $field_class = implode(' ', $field_classes);
-    $input_class = implode(' ', $input_classes);
-    $message_class = implode(' ', $message_classes);
+    // Check for post id
+    if ( empty( $data['post_id'] ) ) {
+      $errors['post_id'] = $messages['empty'];
+    }
 
-    // TODO: Allow for dynamic templates
-    $email_form = '<div class="' . $class . '">
-      <form class="' . $form_class . '" method="post" action="' . get_permalink() . '">
-        <div class="' . $field_class . '">
-          <label for="cf_email">' . $label_email . '</label>
-          <input class="' . $input_class . '" placeholder="' . $placeholder_email . '" type="text" name="email" id="cf_email" size="50" maxlength="50" value="' . $form_data['email'] . '" />
-          ' . ($message ? '<div class="' . $message_class . '">' . $message . '</div>' : '') . '
-          <input type="hidden" name="post_id" value="' . $post_id . '"/>
-        </div>
-        <div class="' . $footer_class . '">
-          <input class="' . $button_class . '" type="submit" value="' . $label_submit . '" name="send" id="cf_send" />
-        </div>
-      </form>
-    </div>';
+    // And if the e-mail is not valid, switch $error to TRUE and set the result text to the shortcode attribute named 'error_noemail'
+    if ( !$errors['email'] && !is_email( $data['email'] ) ) {
+      $errors['email'] = $messages['email_invalid'];
+    }
 
-    return $email_form;
+    if ( !count(array_keys($errors)) ) {
+      // Actually subscribe the user's email to post updates
+      post_notifications_insert($data['post_id'], $data['email']);
+
+      // Success
+      $success = true;
+    }
+  }
+
+  $output = post_notifications_render($template, array(
+    'title' => $title,
+    'description' => $description,
+    'required' => $required,
+    'fields' => $fields,
+    'success' => $success,
+    'errors' => $errors,
+    'action' => $action,
+    'data' => $data
+  ));
+
+  // Sanitize form with identifier and add hidden fields
+  $output = post_notifications_sanitize_output($output, 'post-notifications', array(
+    'post_id' => $post_id
+  ));
+
+  return $output;
 }
 add_shortcode( 'post_notifications', 'post_notifications_shortcode' );
 
+
+/** Enqueue Scripts */
+function post_notifications_enqueue_scripts() {
+  wp_enqueue_script( 'post-notifications', plugin_dir_url( __FILE__ ) . 'dist/post-notifications.js' );
+}
+add_action('wp_enqueue_scripts', 'post_notifications_enqueue_scripts');
 ?>
