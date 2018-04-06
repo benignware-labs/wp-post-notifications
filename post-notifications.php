@@ -1,7 +1,7 @@
 <?php
 
 /**
- Plugin Name: Post notifications
+ Plugin Name: Post Notifications
  Plugin URI: http://github.com/benignware-labs/wp-post-notifications
  Description: Let users subscribe to post updates
  Version: 0.0.2
@@ -174,6 +174,7 @@ EOT;
 }
 
 function post_notifications_post_updated($post_id, $post_after, $post_before) {
+  global $__post_notifications_sent;
   $affected_subscriptions = post_notifications_get_subscriptions($post_id);
   foreach ($affected_subscriptions as $subscription) {
     $subject = 'Post has been updated';
@@ -181,61 +182,40 @@ function post_notifications_post_updated($post_id, $post_after, $post_before) {
     $to = $subscription->email;
     // Send message to subscriber
     // echo "SEND MESSAGE to {$subscription->email} <pre>$message</pre><br/>";
+    // exit;
     post_notifications_mail($to, $subject, $message);
   }
+  $_SESSION['POST_NOTIFICATIONS_SENT'] = count($affected_subscriptions);
 }
 add_action( 'post_updated', 'post_notifications_post_updated', 10, 3 ); //don't forget the last argument to allow all three arguments of the function
 
-
-function post_notifications_sanitize_output($html, $form_name = null, $hidden = array()) {
-  $is_valid = $form_name ? false : true;
-  if (!$is_valid) {
-    // Parse input
-    $doc = new DOMDocument();
-    @$doc->loadHTML('<?xml encoding="utf-8" ?>' . $html );
-    // Get the container element
-    $container = $doc->getElementsByTagName('body')->item(0)->firstChild;
-    $container->setAttribute("data-$form_name", 'test');
-    // Get the form element
-    $form = $doc->getElementsByTagName( 'form' )->item(0);
-    if ($form) {
-      $action = $form->getAttribute('action') ?: $_SERVER['REQUEST_URI'];
-      $form->setAttribute('action', $action);
-      $method = $form->getAttribute('method') ?: 'POST';
-      $form->setAttribute('method', $method);
-
-      $input_elements = $doc->getElementsByTagName( 'input' );
-      $hidden_fields = array();
-
-      // Go through present hidden fields and add update values
-      foreach ($input_elements as $input_element) {
-        $input_type = $input_element->getAttribute('type');
-        $input_name = $input_element->getAttribute('name');
-        if ($input_type === 'hidden' && array_key_exists($hidden, $input_name)) {
-          $hidden_fields[] = $input_name;
-          $input_element->setAttribute($input_name, $hidden[$input_name]);
-        }
-      }
-
-      // And add the missing hidden fields
-      foreach ($hidden as $field => $value) {
-        if (!in_array($field, $hidden_fields)) {
-          $input_element = $doc->createElement('input');
-          $input_element->setAttribute('type', 'hidden');
-          $input_element->setAttribute('name', $field);
-          $input_element->setAttribute('value', $hidden[$field]);
-          $form->appendChild($input_element);
-        }
-      }
-    } else {
-      // TODO: Handle error "Output must contain a form"
-    }
-    if (!$is_valid) {
-      $html = preg_replace('~(?:<\?[^>]*>|<(?:!DOCTYPE|/?(?:html|head|body))[^>]*>)\s*~i', '', $doc->saveHTML());
-    }
+function post_notifications_start_session() {
+  if(!session_id()) {
+    session_start();
   }
-  return $html;
 }
+add_action('init', 'post_notifications_start_session', 1);
+
+function post_notifications_end_session() {
+    session_destroy ();
+}
+add_action('wp_logout', 'post_notifications_end_session');
+add_action('wp_login', 'post_notifications_end_session');
+
+function post_notifications_sent_notice() {
+  $sent_count = $_SESSION['POST_NOTIFICATIONS_SENT'];
+  if ($sent_count > 0) {
+    ?>
+    <div id="post-notifications-notice-sent" class="notice notice-success is-dismissible">
+      <p class="notice-message"><?php printf( __( 'Post notification sent to %d subscribed users.', 'post-notifications' ), $sent_count ); ?></p>
+    </div>
+    <?php
+    $_SESSION['POST_NOTIFICATIONS_SENT'] = 0;
+  }
+}
+add_action( 'admin_notices', 'post_notifications_sent_notice' );
+
+
 
 /**
  * Post Notifications Shortcode
