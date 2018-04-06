@@ -23,6 +23,7 @@ function custom_shortcode_atts_post_notifications($out, $pairs, $atts, $shortcod
   return $result;
 }
 add_filter( 'shortcode_atts_post_notifications', 'custom_shortcode_atts_post_notifications', 10, 4);
+```
 
 ## Development
 
