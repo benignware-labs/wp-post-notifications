@@ -17,7 +17,7 @@ function post_notifications_mail($to, $subject = '', $body = '', $headers = '') 
     'Content-Type: text/html; charset=UTF-8',
     'From: '. get_bloginfo('name') .' <'. get_bloginfo('admin_email') .'>'
   );
-  $headers = 'From: '. get_bloginfo('name') .' <'. get_bloginfo('admin_email') .'>' . "\r\n";
+  // $headers = 'From: '. get_bloginfo('name') .' <'. get_bloginfo('admin_email') .'>' . "\r\n";
 
   $result = wp_mail( $to, $subject, $body, $headers );
 }
@@ -159,16 +159,14 @@ function post_notifications_get_updated_message($subscription) {
   $permalink = get_permalink($post_id);
   $post_title = get_the_title($post_id);
   $unsubscribe_link = add_query_arg( 'pn_unsubscribe', $hash, $permalink );
+  $template = dirname(__FILE__) . '/post-notifications-mail-template.php';
 
-  $content = <<< EOT
-$title\n
-\n
-"$post_title" has been updated:\n
-$permalink\n
-\n
-Unsubscribe:\n
-$unsubscribe_link\n
-EOT;
+  $content = post_notifications_render($template, array(
+    'title' => $title,
+    'permalink' => $permalink,
+    'unsubscribe_link' => $unsubscribe_link,
+    'post_title' => $post_title
+  ));
 
   return $content;
 }
@@ -214,6 +212,55 @@ function post_notifications_sent_notice() {
   }
 }
 add_action( 'admin_notices', 'post_notifications_sent_notice' );
+
+
+// Sanitize form
+function post_notifications_sanitize_output($html, $form_name = null, $hidden = array()) {
+  $is_valid = $form_name ? false : true;
+  if (!$is_valid) {
+    // Parse input
+    $doc = new DOMDocument();
+    @$doc->loadHTML('<?xml encoding="utf-8" ?>' . $html );
+    // Get the container element
+    $container = $doc->getElementsByTagName('body')->item(0)->firstChild;
+    $container->setAttribute("data-$form_name", 'test');
+    // Get the form element
+    $form = $doc->getElementsByTagName( 'form' )->item(0);
+    if ($form) {
+      $action = $form->getAttribute('action') ?: $_SERVER['REQUEST_URI'];
+      $form->setAttribute('action', $action);
+      $method = $form->getAttribute('method') ?: 'POST';
+      $form->setAttribute('method', $method);
+      $input_elements = $doc->getElementsByTagName( 'input' );
+      $hidden_fields = array();
+      // Go through present hidden fields and add update values
+      foreach ($input_elements as $input_element) {
+        $input_type = $input_element->getAttribute('type');
+        $input_name = $input_element->getAttribute('name');
+        if ($input_type === 'hidden' && array_key_exists($hidden, $input_name)) {
+          $hidden_fields[] = $input_name;
+          $input_element->setAttribute($input_name, $hidden[$input_name]);
+        }
+      }
+      // And add the missing hidden fields
+      foreach ($hidden as $field => $value) {
+        if (!in_array($field, $hidden_fields)) {
+          $input_element = $doc->createElement('input');
+          $input_element->setAttribute('type', 'hidden');
+          $input_element->setAttribute('name', $field);
+          $input_element->setAttribute('value', $hidden[$field]);
+          $form->appendChild($input_element);
+        }
+      }
+    } else {
+      // TODO: Handle error "Output must contain a form"
+    }
+    if (!$is_valid) {
+      $html = preg_replace('~(?:<\?[^>]*>|<(?:!DOCTYPE|/?(?:html|head|body))[^>]*>)\s*~i', '', $doc->saveHTML());
+    }
+  }
+  return $html;
+}
 
 
 
