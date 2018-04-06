@@ -1,6 +1,6 @@
 {
   "name": "wp-post-notifications",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "Let users subscribe to post updates",
   "main": "post-notifications.js",
   "scripts": {
