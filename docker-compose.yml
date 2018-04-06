@@ -13,6 +13,7 @@ services:
     - db_data:/var/lib/mysql
     restart: always
   wordpress:
+    build: .
     environment:
       WORDPRESS_DB_HOST: db:3306
       WORDPRESS_DB_USER: wordpress
@@ -47,6 +48,11 @@ services:
     - wordpress:/var/www/html
     links:
     - wordpress:wordpress
+  mailhog:
+    image: mailhog/mailhog:v1.0.0
+    ports:
+    - "1025:1025"
+    - "3025:8025"
 volumes:
   db_data:
   wordpress:
